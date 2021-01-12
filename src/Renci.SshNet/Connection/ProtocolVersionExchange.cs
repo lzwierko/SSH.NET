@@ -138,6 +138,11 @@ namespace Renci.SshNet.Connection
                     // Return current line without CRLF
                     return Encoding.UTF8.GetString(buffer.ToArray(), startPosition, buffer.Count - (startPosition + 2));
                 }
+                if (byteRead == Session.LineFeed && buffer.Count > startPosition + 1 && buffer[buffer.Count - 2] != Session.CarriageReturn)
+                {
+                    // Return current line without LF
+                    return Encoding.UTF8.GetString(buffer.ToArray(), startPosition, buffer.Count - (startPosition + 1));
+                }
             }
 
             return null;

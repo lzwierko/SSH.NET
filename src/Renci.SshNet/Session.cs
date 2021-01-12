@@ -83,8 +83,6 @@ namespace Renci.SshNet
         /// <summary>
         /// Controls how many authentication attempts can take place at the same time.
         /// </summary>
-        /// <remarks>
-        /// Some server may restrict number to prevent authentication attacks
         private static readonly SemaphoreLight AuthenticationConnection = new SemaphoreLight(3);
 
         /// <summary>
@@ -533,6 +531,7 @@ namespace Renci.SshNet
         /// </summary>
         /// <param name="connectionInfo">The connection info.</param>
         /// <param name="serviceFactory">The factory to use for creating new services.</param>
+        /// <param name="socketFactory"></param>
         /// <exception cref="ArgumentNullException"><paramref name="connectionInfo"/> is <c>null</c>.</exception>
         /// <exception cref="ArgumentNullException"><paramref name="serviceFactory"/> is <c>null</c>.</exception>
         /// <exception cref="ArgumentNullException"><paramref name="serviceFactory"/> is <c>null</c>.</exception>
@@ -601,7 +600,6 @@ namespace Renci.SshNet
                         throw new SshConnectionException(string.Format(CultureInfo.CurrentCulture, "Server version '{0}' is not supported.", serverIdentification.ProtocolVersion),
                                                          DisconnectReason.ProtocolVersionNotSupported);
                     }
-
 
                     RegisterMessage("SSH_MSG_DISCONNECT");
                     RegisterMessage("SSH_MSG_IGNORE");
@@ -1304,7 +1302,6 @@ namespace Renci.SshNet
         /// Called when <see cref="NewKeysMessage"/> message received.
         /// </summary>
         /// <param name="message"><see cref="NewKeysMessage"/> message.</param>
-        /// <param name="message"><see cref="NewKeysMessage"/> message.</param>
         internal void OnNewKeysReceived(NewKeysMessage message)
         {
             //  Update sessionId
@@ -1739,6 +1736,7 @@ namespace Renci.SshNet
         /// <summary>
         /// Performs a blocking read on the socket until <paramref name="length"/> bytes are received.
         /// </summary>
+        /// <param name="socket"></param>
         /// <param name="buffer">An array of type <see cref="byte"/> that is the storage location for the received data.</param>
         /// <param name="offset">The position in <paramref name="buffer"/> parameter to store the received data.</param>
         /// <param name="length">The number of bytes to read.</param>
@@ -1747,7 +1745,6 @@ namespace Renci.SshNet
         /// </returns>
         /// <exception cref="SshOperationTimeoutException">The read has timed-out.</exception>
         /// <exception cref="SocketException">The read failed.</exception>
-
         private static int TrySocketRead(Socket socket, byte[] buffer, int offset, int length)
         {
             return SocketAbstraction.Read(socket, buffer, offset, length, InfiniteTimeSpan);
