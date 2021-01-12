@@ -49,8 +49,18 @@ namespace Renci.SshNet.Abstractions
 
         public static Socket Connect(IPEndPoint remoteEndpoint, TimeSpan connectTimeout)
         {
-            var socket = new Socket(remoteEndpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp) {NoDelay = true};
+            var socket = new Socket(remoteEndpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            ConnectCore(socket, remoteEndpoint, connectTimeout, true);
+            return socket;
+        }
 
+        public static void Connect(Socket socket, IPEndPoint remoteEndpoint, TimeSpan connectTimeout)
+        {
+            ConnectCore(socket, remoteEndpoint, connectTimeout, false);
+        }
+
+        private static void ConnectCore(Socket socket, IPEndPoint remoteEndpoint, TimeSpan connectTimeout, bool ownsSocket)
+        {
 #if FEATURE_SOCKET_EAP
             var connectCompleted = new ManualResetEvent(false);
             var args = new SocketAsyncEventArgs
@@ -66,8 +76,11 @@ namespace Renci.SshNet.Abstractions
                 {
                     // avoid ObjectDisposedException in ConnectCompleted
                     args.Completed -= ConnectCompleted;
-                    // dispose Socket
-                    socket.Dispose();
+                    if (ownsSocket)
+                    {
+                        // dispose Socket
+                        socket.Dispose();
+                    }
                     // dispose ManualResetEvent
                     connectCompleted.Dispose();
                     // dispose SocketAsyncEventArgs
@@ -86,8 +99,12 @@ namespace Renci.SshNet.Abstractions
             {
                 var socketError = (int) args.SocketError;
 
-                // dispose Socket
-                socket.Dispose();
+                if (ownsSocket)
+                {
+                    // dispose Socket
+                    socket.Dispose();
+                }
+
                 // dispose SocketAsyncEventArgs
                 args.Dispose();
 
@@ -96,20 +113,16 @@ namespace Renci.SshNet.Abstractions
 
             // dispose SocketAsyncEventArgs
             args.Dispose();
-
-            return socket;
 #elif FEATURE_SOCKET_APM
             var connectResult = socket.BeginConnect(remoteEndpoint, null, null);
             if (!connectResult.AsyncWaitHandle.WaitOne(connectTimeout, false))
                 throw new SshOperationTimeoutException(string.Format(CultureInfo.InvariantCulture,
                     "Connection failed to establish within {0:F0} milliseconds.", connectTimeout.TotalMilliseconds));
             socket.EndConnect(connectResult);
-            return socket;
 #elif FEATURE_SOCKET_TAP
             if (!socket.ConnectAsync(remoteEndpoint).Wait(connectTimeout))
                 throw new SshOperationTimeoutException(string.Format(CultureInfo.InvariantCulture,
                     "Connection failed to establish within {0:F0} milliseconds.", connectTimeout.TotalMilliseconds));
-            return socket;
 #else
             #error Connecting to a remote endpoint is not implemented.
 #endif
@@ -148,10 +161,10 @@ namespace Renci.SshNet.Abstractions
             var receiveCompleted = new ManualResetEvent(false);
             var sendReceiveToken = new PartialSendReceiveToken(socket, receiveCompleted);
             var args = new SocketAsyncEventArgs
-            {
-                RemoteEndPoint = socket.RemoteEndPoint,
-                UserToken = sendReceiveToken
-            };
+                {
+                    RemoteEndPoint = socket.RemoteEndPoint,
+                    UserToken = sendReceiveToken
+                };
             args.Completed += ReceiveCompleted;
             args.SetBuffer(buffer, offset, size);
 
@@ -165,6 +178,10 @@ namespace Renci.SshNet.Abstractions
                                 CultureInfo.InvariantCulture,
                                 "Socket read operation has timed out after {0:F0} milliseconds.",
                                 timeout.TotalMilliseconds));
+                }
+                else
+                {
+                    sendReceiveToken.Process(args);
                 }
 
                 if (args.SocketError != SocketError.Success)
@@ -180,7 +197,7 @@ namespace Renci.SshNet.Abstractions
                 receiveCompleted.Dispose();
             }
 #else
-#error Receiving data from a Socket is not implemented.
+            #error Receiving data from a Socket is not implemented.
 #endif
         }
 
@@ -242,7 +259,7 @@ namespace Renci.SshNet.Abstractions
             if (readToken.Exception != null)
                 throw readToken.Exception;
 #else
-#error Receiving data from a Socket is not implemented.
+            #error Receiving data from a Socket is not implemented.
 #endif
         }
 
@@ -278,30 +295,57 @@ namespace Renci.SshNet.Abstractions
         }
 
         /// <summary>
-        /// Receives data from a bound <see cref="Socket"/>into a receive buffer.
+        /// Receives data from a bound <see cref="Socket"/>.
+        /// </summary>
+        /// <param name="socket"></param>
+        /// <param name="size">The number of bytes to receive.</param>
+        /// <param name="timeout">Specifies the amount of time after which the call will time out.</param>
+        /// <returns>
+        /// The bytes received.
+        /// </returns>
+        /// <remarks>
+        /// If no data is available for reading, the <see cref="Read(Socket, int, TimeSpan)"/> method will
+        /// block until data is available or the time-out value is exceeded. If the time-out value is exceeded, the
+        /// <see cref="Read(Socket, int, TimeSpan)"/> call will throw a <see cref="SshOperationTimeoutException"/>.
+        ///  If you are in non-blocking mode, and there is no data available in the in the protocol stack buffer, the
+        /// <see cref="Read(Socket, int, TimeSpan)"/> method will complete immediately and throw a <see cref="SocketException"/>.
+        /// </remarks>
+        public static byte[] Read(Socket socket, int size, TimeSpan timeout)
+        {
+            var buffer = new byte[size];
+            Read(socket, buffer, 0, size, timeout);
+            return buffer;
+        }
+
+        /// <summary>
+        /// Receives data from a bound <see cref="Socket"/> into a receive buffer.
         /// </summary>
         /// <param name="socket"></param>
         /// <param name="buffer">An array of type <see cref="byte"/> that is the storage location for the received data. </param>
         /// <param name="offset">The position in <paramref name="buffer"/> parameter to store the received data.</param>
         /// <param name="size">The number of bytes to receive.</param>
-        /// <param name="timeout">Specifies the amount of time after which the call will time out.</param>
+        /// <param name="readTimeout">The maximum time to wait until <paramref name="size"/> bytes have been received.</param>
         /// <returns>
         /// The number of bytes received.
         /// </returns>
         /// <remarks>
-        /// If no data is available for reading, the <see cref="Read(Socket,byte[], int, int, TimeSpan)"/> method will
-        /// block until data is available or the time-out value was exceeded. If the time-out value was exceeded, the
-        /// <see cref="Read(Socket,byte[], int, int, TimeSpan)"/> call will throw a <see cref="SshOperationTimeoutException"/>.
-        ///  If you are in non-blocking mode, and there is no data available in the in the protocol stack buffer, the
-        /// <see cref="Read(Socket,byte[], int, int, TimeSpan)"/> method will complete immediately and throw a <see cref="SocketException"/>.
+        /// <para>
+        /// If no data is available for reading, the <see cref="Read(Socket, byte[], int, int, TimeSpan)"/> method will
+        /// block until data is available or the time-out value is exceeded. If the time-out value is exceeded, the
+        /// <see cref="Read(Socket, byte[], int, int, TimeSpan)"/> call will throw a <see cref="SshOperationTimeoutException"/>.
+        /// </para>
+        /// <para>
+        /// If you are in non-blocking mode, and there is no data available in the in the protocol stack buffer, the
+        /// <see cref="Read(Socket, byte[], int, int, TimeSpan)"/> method will complete immediately and throw a <see cref="SocketException"/>.
+        /// </para>
         /// </remarks>
-        public static int Read(Socket socket, byte[] buffer, int offset, int size, TimeSpan timeout)
+        public static int Read(Socket socket, byte[] buffer, int offset, int size, TimeSpan readTimeout)
         {
 #if FEATURE_SOCKET_SYNC
             var totalBytesRead = 0;
             var totalBytesToRead = size;
 
-            socket.ReceiveTimeout = (int) timeout.TotalMilliseconds;
+            socket.ReceiveTimeout = (int)readTimeout.TotalMilliseconds;
 
             do
             {
@@ -323,7 +367,7 @@ namespace Renci.SshNet.Abstractions
 
                     if (ex.SocketErrorCode == SocketError.TimedOut)
                         throw new SshOperationTimeoutException(string.Format(CultureInfo.InvariantCulture,
-                            "Socket read operation has timed out after {0:F0} milliseconds.", timeout.TotalMilliseconds));
+                            "Socket read operation has timed out after {0:F0} milliseconds.", readTimeout.TotalMilliseconds));
 
                      throw;
                 }
@@ -336,10 +380,10 @@ namespace Renci.SshNet.Abstractions
             var sendReceiveToken = new BlockingSendReceiveToken(socket, buffer, offset, size, receiveCompleted);
 
             var args = new SocketAsyncEventArgs
-            {
-                UserToken = sendReceiveToken,
-                RemoteEndPoint = socket.RemoteEndPoint
-            };
+                {
+                    UserToken = sendReceiveToken,
+                    RemoteEndPoint = socket.RemoteEndPoint
+                };
             args.Completed += ReceiveCompleted;
             args.SetBuffer(buffer, offset, size);
 
@@ -347,9 +391,13 @@ namespace Renci.SshNet.Abstractions
             {
                 if (socket.ReceiveAsync(args))
                 {
-                    if (!receiveCompleted.WaitOne(timeout))
+                    if (!receiveCompleted.WaitOne(readTimeout))
                         throw new SshOperationTimeoutException(string.Format(CultureInfo.InvariantCulture,
-                            "Socket read operation has timed out after {0:F0} milliseconds.", timeout.TotalMilliseconds));
+                            "Socket read operation has timed out after {0:F0} milliseconds.", readTimeout.TotalMilliseconds));
+                }
+                else
+                {
+                    sendReceiveToken.Process(args);
                 }
 
                 if (args.SocketError != SocketError.Success)
@@ -384,11 +432,10 @@ namespace Renci.SshNet.Abstractions
             {
                 try
                 {
-                    var bytesSent = socket.Send(data, offset + totalBytesSent, totalBytesToSend - totalBytesSent,
-                        SocketFlags.None);
+                    var bytesSent = socket.Send(data, offset + totalBytesSent, totalBytesToSend - totalBytesSent, SocketFlags.None);
                     if (bytesSent == 0)
                         throw new SshConnectionException("An established connection was aborted by the server.",
-                            DisconnectReason.ConnectionLost);
+                                                         DisconnectReason.ConnectionLost);
 
                     totalBytesSent += bytesSent;
                 }
@@ -407,10 +454,10 @@ namespace Renci.SshNet.Abstractions
             var sendCompleted = new ManualResetEvent(false);
             var sendReceiveToken = new BlockingSendReceiveToken(socket, data, offset, size, sendCompleted);
             var socketAsyncSendArgs = new SocketAsyncEventArgs
-            {
-                RemoteEndPoint = socket.RemoteEndPoint,
-                UserToken = sendReceiveToken
-            };
+                {
+                    RemoteEndPoint = socket.RemoteEndPoint,
+                    UserToken = sendReceiveToken
+                };
             socketAsyncSendArgs.SetBuffer(data, offset, size);
             socketAsyncSendArgs.Completed += SendCompleted;
 
@@ -421,13 +468,17 @@ namespace Renci.SshNet.Abstractions
                     if (!sendCompleted.WaitOne())
                         throw new SocketException((int) SocketError.TimedOut);
                 }
+                else
+                {
+                    sendReceiveToken.Process(socketAsyncSendArgs);
+                }
 
                 if (socketAsyncSendArgs.SocketError != SocketError.Success)
                     throw new SocketException((int) socketAsyncSendArgs.SocketError);
 
                 if (sendReceiveToken.TotalBytesTransferred == 0)
                     throw new SshConnectionException("An established connection was aborted by the server.",
-                        DisconnectReason.ConnectionLost);
+                                                     DisconnectReason.ConnectionLost);
             }
             finally
             {
@@ -437,7 +488,7 @@ namespace Renci.SshNet.Abstractions
                 sendCompleted.Dispose();
             }
 #else
-#error Sending data to a Socket is not implemented.
+            #error Sending data to a Socket is not implemented.
 #endif
         }
 

@@ -37,7 +37,7 @@ namespace Renci.SshNet.Security
         /// <value>
         /// The shared key.
         /// </value>
-        public BigInteger SharedKey { get; protected set; }
+        public byte[] SharedKey { get; protected set; }
 
         private byte[] _exchangeHash;
 
@@ -330,13 +330,7 @@ namespace Renci.SshNet.Security
         /// <returns>
         /// Hashed bytes
         /// </returns>
-        protected virtual byte[] Hash(byte[] hashData)
-        {
-            using (var sha1 = CryptoAbstraction.CreateSHA1())
-            {
-                return sha1.ComputeHash(hashData, 0, hashData.Length);
-            }
-        }
+        protected abstract byte[] Hash(byte[] hashData);
 
         /// <summary>
         /// Sends SSH message to the server
@@ -355,17 +349,20 @@ namespace Renci.SshNet.Security
         /// <param name="key">The key.</param>
         /// <param name="size">The size.</param>
         /// <returns></returns>
-        private byte[] GenerateSessionKey(BigInteger sharedKey, byte[] exchangeHash, byte[] key, int size)
+        private byte[] GenerateSessionKey(byte[] sharedKey, byte[] exchangeHash, byte[] key, int size)
         {
             var result = new List<byte>(key);
+
             while (size > result.Count)
             {
-                result.AddRange(Hash(new _SessionKeyAdjustment
-                {
-                    SharedKey = sharedKey,
-                    ExchangeHash = exchangeHash,
-                    Key = key,
-                }.GetBytes()));
+                var sessionKeyAdjustment = new SessionKeyAdjustment
+                    {
+                        SharedKey = sharedKey,
+                        ExchangeHash = exchangeHash,
+                        Key = key,
+                    };
+
+                result.AddRange(Hash(sessionKeyAdjustment.GetBytes()));
             }
 
             return result.ToArray();
@@ -379,28 +376,26 @@ namespace Renci.SshNet.Security
         /// <param name="p">The p.</param>
         /// <param name="sessionId">The session id.</param>
         /// <returns></returns>
-        private static byte[] GenerateSessionKey(BigInteger sharedKey, byte[] exchangeHash, char p, byte[] sessionId)
+        private static byte[] GenerateSessionKey(byte[] sharedKey, byte[] exchangeHash, char p, byte[] sessionId)
         {
-            return new _SessionKeyGeneration
-            {
-                SharedKey = sharedKey,
-                ExchangeHash = exchangeHash,
-                Char = p,
-                SessionId = sessionId,
-            }.GetBytes();
+            var sessionKeyGeneration = new SessionKeyGeneration
+                {
+                    SharedKey = sharedKey,
+                    ExchangeHash = exchangeHash,
+                    Char = p,
+                    SessionId = sessionId
+                };
+            return sessionKeyGeneration.GetBytes();
         }
 
-        private class _SessionKeyGeneration : SshData
+        private class SessionKeyGeneration : SshData
         {
-            private byte[] _sharedKey;
+            public byte[] SharedKey { get; set; }
 
-            public BigInteger SharedKey
-            {
-                private get { return _sharedKey.ToBigInteger(); }
-                set { _sharedKey = value.ToByteArray().Reverse(); }
-            }
             public byte[] ExchangeHash { get; set; }
+
             public char Char { get; set; }
+
             public byte[] SessionId { get; set; }
 
             /// <summary>
@@ -415,7 +410,7 @@ namespace Renci.SshNet.Security
                 {
                     var capacity = base.BufferCapacity;
                     capacity += 4; // SharedKey length
-                    capacity += _sharedKey.Length; // SharedKey
+                    capacity += SharedKey.Length; // SharedKey
                     capacity += ExchangeHash.Length; // ExchangeHash
                     capacity += 1; // Char
                     capacity += SessionId.Length; // SessionId
@@ -430,23 +425,19 @@ namespace Renci.SshNet.Security
 
             protected override void SaveData()
             {
-                WriteBinaryString(_sharedKey);
+                WriteBinaryString(SharedKey);
                 Write(ExchangeHash);
                 Write((byte) Char);
                 Write(SessionId);
             }
         }
 
-        private class _SessionKeyAdjustment : SshData
+        private class SessionKeyAdjustment : SshData
         {
-            private byte[] _sharedKey;
+            public byte[] SharedKey { get; set; }
 
-            public BigInteger SharedKey
-            {
-                private get { return _sharedKey.ToBigInteger(); }
-                set { _sharedKey = value.ToByteArray().Reverse(); }
-            }
             public byte[] ExchangeHash { get; set; }
+
             public byte[] Key { get; set; }
 
             /// <summary>
@@ -461,7 +452,7 @@ namespace Renci.SshNet.Security
                 {
                     var capacity = base.BufferCapacity;
                     capacity += 4; // SharedKey length
-                    capacity += _sharedKey.Length; // SharedKey
+                    capacity += SharedKey.Length; // SharedKey
                     capacity += ExchangeHash.Length; // ExchangeHash
                     capacity += Key.Length; // Key
                     return capacity;
@@ -475,7 +466,7 @@ namespace Renci.SshNet.Security
 
             protected override void SaveData()
             {
-                WriteBinaryString(_sharedKey);
+                WriteBinaryString(SharedKey);
                 Write(ExchangeHash);
                 Write(Key);
             }
